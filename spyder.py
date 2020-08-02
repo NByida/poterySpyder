@@ -17,7 +17,7 @@ headersAtHome = {
     # 'X-Requested-With': 'XMLHttpRequest',
     # "Cookie":"fpid_sa=null; PHPSESSID=jfdgva5m9g4mi75bcqv2nm7227; lang=zh; feid=03c1a79df4c0f65ca1c825dce3f24702; feid_sa=null; fpid=53b72efc6b9c8fd2df3d055be149c48e; xfeid=87aea5cdb4af154c93739691f69716fb; _ym_uid=1554907281660967363; _ym_d=1554907281; locale=en"
 }
-hosturl = "https://www.xzslx.net/"
+hosturl = "https://www.xzslx.net"
 
 db = Database({'db': 'new_schema',
                'engine': 'peewee.MySQLDatabase',
@@ -83,6 +83,7 @@ class Tag(db.Model):
 
 Tag.create_table()
 
+
 # 大类
 class WordsLabel(db.Model):
     class Meta:
@@ -91,7 +92,10 @@ class WordsLabel(db.Model):
 
     label_name = peewee.TextField()
     tag = peewee.TextField()
+
+
 WordsLabel.create_table()
+
 
 # 小类
 class WordsType(db.Model):
@@ -99,12 +103,15 @@ class WordsType(db.Model):
         db_table = 'words_type'
         id = peewee.PrimaryKeyField()
 
-    label_id=peewee.IntegerField()
+    label_id = peewee.IntegerField()
     label_name = peewee.TextField()
     type = peewee.TextField()
     url = peewee.TextField()
     lastpage = peewee.IntegerField()
+
+
 WordsType.create_table()
+
 
 class Words(db.Model):
     class Meta:
@@ -121,8 +128,9 @@ class Words(db.Model):
     # 诗人
     poet = peewee.TextField()
     linkId = peewee.TextField()
-Words.create_table()
 
+
+Words.create_table()
 
 
 def getEveryPoet(s):
@@ -337,7 +345,7 @@ def retry():
         threading.Thread(target=retryUrl, args=(failedlist, index, index + 50)).start()
 
 
-# retry()
+retry()
 # start()
 # ---------------------------------------------------------------------------------------
 
@@ -351,9 +359,12 @@ def getJuzi():
                 text = link.get_text()
                 if text.isalpha() and text.find("页") == -1 and text.find("不限") == -1 and text.find("名句") == -1:
                     # print(link.get('href') + link.get_text())
-                    getJuPage(link.get('href'),link.get_text())
+                    wordsLabel = WordsLabel(label_name=link.get_text(), tag="")
+                    wordsLabel.save()
+                    getJuPage(link.get('href'), wordsLabel.id, wordsLabel.label_name)
 
-def getJuPage(url,label):
+
+def getJuPage(url, id, label_name):
     addurl = hosturl + url
     print(addurl)
     r = urllib.request.urlopen(addurl).read().decode('utf-8', errors='ignore')
@@ -363,4 +374,118 @@ def getJuPage(url,label):
                 text = link.get_text()
                 if text.isalpha() and text.find("页") == -1 and text.find("不限") == -1 and text.find("名句") == -1:
                     print(link.get('href') + link.get_text())
-getJuzi()
+                    wordstype = WordsType(label_id=id, label_name=label_name, type=link.get_text(),
+                                          url=link.get('href'))
+                    wordstype.save()
+
+
+# getJuzi()
+
+
+def saveWord(worldType, name,poet,id,words):
+    if len(Words.select().where(Words.words == words)) == 0:
+        word = Words(label_name=worldType.label_name,
+                     type=worldType.type,
+                     words=words,
+                     name=name,
+                     dynasty="",
+                     poet=poet,
+                     linkId=id
+                     )
+        word.save()
+        print(worldType.type+"----"+name+"----"+poet+"----"+id+"-------"+words)
+    else:
+        print("jump "+name)
+
+# 获取分类的页码末页
+def getlastpage():
+    for worldType in WordsType.select():
+        addurl = hosturl + worldType.url
+        r = urllib.request.urlopen(addurl).read().decode('utf-8', errors='ignore')
+        patern = re.compile(r'共(.*?)首名句', re.S)
+        res = patern.findall(r)
+        num=1
+        if (len(res) > 0) and not (res is None) and res[0].isdigit():
+            page=int(res[0])
+            if(page<20):
+                print(worldType.type+"页码为1")
+                num = 1
+            else:
+                if(page%15==0):
+                    print(worldType.type+"页码为"+str(int(page/15)))
+                    num = int(page/15)
+                else:
+                    print(worldType.type + "页码为" + str(int(page/15+1)))
+                    num = int(page/15)+1
+        else:
+            print(worldType.type+"页码为1")
+            num = 1
+        WordsType.update(lastpage=num).where(WordsType.id == worldType.id).execute()
+
+# 自动保存爬取历史
+def requestNet(url):
+    try:
+        successnum = len(History.select().where(
+            (History.history_url == url) & (History.success == True)))
+        if (successnum > 0):
+            print("跳过该页--" + url )
+            return ""
+        else:
+            r = urllib.request.urlopen(url).read().decode('utf-8', errors='ignore')
+
+            history = History(history_url=url, success=True)
+            if len(History.select().where((History.history_url == url))) == 0:
+                history.save()
+            else:
+                History.update(success=True).where(History.history_url ==url).execute()
+            return r
+    except:
+        if len(History.select().where(History.history_url == url)) == 0:
+            history = History(history_url=url, success=False)
+            print("History failed save" + history.history_url)
+            history.save()
+        else:
+            print("History failed skip save" + url)
+        return ""
+
+
+# 获取分类下的所有诗句
+def getword():
+    for worldType in WordsType.select():
+        lastpage=worldType.lastpage
+        for i in range(1,lastpage+1):
+            addurl = hosturl + worldType.url[:-2]+str(i)+"/"
+            r =requestNet(addurl)
+            if len(r)==0:
+                break
+            juzi = "﻿<!DOCTYPE html><html>" + str(
+                BS(r, "html.parser").find_all('ul', class_='mingju')[0]) + "</body></html>"
+            if juzi is None:
+                print(addurl + " is null,please check")
+            else:
+                name = ""
+                poet = ""
+                woed = ""
+                id = ""
+                for li in BS(juzi, "html.parser").find_all("li"):
+                    lihtml = "﻿<!DOCTYPE html><html>" + str(li) + "</body></html>"
+                    for herf in BS(lihtml, "html.parser").find_all("a"):
+                        if herf.get('href').startswith("/ju"):
+                            woed = herf.get_text()
+                        if herf.get('href').startswith("/shi/"):
+                            patern = re.compile(r'/shi/(.*?).html', re.S)
+                            r = patern.findall(herf.get('href'))
+                            if (len(r) > 0) and not (r is None):
+                                id = r[0]
+                            else:
+                                id = ""
+                            name = herf.get_text()
+                        if herf.get('href').startswith("/shiren"):
+                            poet = herf.get_text()
+                    saveWord(worldType, name, poet, id, woed)
+                    name = ""
+                    poet = ""
+                    woed = ""
+                    id = ""
+# getlastpage()
+# getword()
